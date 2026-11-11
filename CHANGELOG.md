@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Local package feed override.** Forward an optional credential-free HTTPS
+  `PIP_INDEX_URL` to local Docker builds. Reject URL user information, query
+  strings and fragments; authenticated feeds need a separately reviewed
+  build-secret mechanism. Cloud ACR Task builds are unchanged.
+
+### Fixed
+
+- **Package metadata recovery.** Repeat dependency installation after wheel
+  metadata is available and run `pip check`, so incomplete source-package
+  metadata cannot silently leave the UI image with missing dependencies.
+
 ## [v3.3.0] - 2026-10-14
 
 ### Added

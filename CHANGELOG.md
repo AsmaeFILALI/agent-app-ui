@@ -11,6 +11,10 @@
 
 ### Fixed
 
+- **Local build-context isolation.** Exclude root/nested environment files,
+  local configuration, upload caches, deployment logs and local state from
+  Docker's COPY-all context, including files ignored by Git's clean-source
+  check. Add exclusion contracts and an optional synthetic Docker export test.
 - **Package metadata recovery.** Repeat dependency installation after wheel
   metadata is available and run `pip check`, so incomplete source-package
   metadata cannot silently leave the UI image with missing dependencies.

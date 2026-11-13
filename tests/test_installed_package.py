@@ -26,6 +26,7 @@ class InstalledPackageTests(unittest.TestCase):
         cls.run_command([
             str(cls.python), "-m", "pip", "install", "--quiet",
             "-r", str(ROOT / "requirements.txt"),
+            "-r", str(ROOT / "requirements-test.txt"),
         ], timeout=600)
         cls.run_command([str(cls.python), "-m", "pip", "check"])
         cls.wheels = cls.root / "wheels"
@@ -43,14 +44,15 @@ class InstalledPackageTests(unittest.TestCase):
         cls.cwd.mkdir()
         cls.inventory = json.loads((ROOT / ".quality/migration.json").read_text(encoding="utf-8"))
         cls.behavioral_tests = cls.root / "behavioral-tests"
-        # The other three modules inspect/build the source tree and already run
-        # separately. Reuse the behavioral suite without copying application code.
+        # Source/build and deployment-tooling contracts run in the checkout.
+        # Reuse runtime behavior here without copying application source.
         shutil.copytree(
             ROOT / "tests",
             cls.behavioral_tests,
             ignore=shutil.ignore_patterns(
                 "__pycache__", "test_installed_package.py",
                 "test_module_compatibility.py", "test_quality_policy.py",
+                "deployment",
             ),
         )
 
@@ -271,6 +273,7 @@ with TestClient(main.app) as client:
     assert response.status_code == {401 if active else 503}, response.status_code
 """, environment={
                     "CHAT_BACKEND": "",
+                    "CHAINLIT_URL": "https://ui.example.com",
                     "HOSTED_AGENT_BASE_URL": "https://agent.example.com/protocol",
                     "HOSTED_AGENT_RESOURCE_SCOPE": "api://hosted-agent/.default",
                     "OAUTH_AZURE_AD_CLIENT_ID": "test-client",

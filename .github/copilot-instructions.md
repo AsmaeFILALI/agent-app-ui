@@ -241,7 +241,7 @@ When a release branch is created from `develop`, the agent MUST:
 1. convert `Unreleased` into the actual release entry
 2. use the correct version with `v` prefix in the changelog
 3. add the release date
-4. recreate a new empty `Unreleased` section at the top
+4. do not keep an `Unreleased` section on the release branch or `main`
 5. synchronize the changelog with the `VERSION` file
 
 Required transformation:
@@ -261,8 +261,6 @@ To:
 Example:
 
 ```md
-## [Unreleased]
-
 ## [v2.4.2] - 2026-03-22
 
 ### Added
@@ -271,6 +269,11 @@ Example:
 ### Fixed
 - Agent Service lifecycle cleanup...
 ```
+
+After the release is merged, synchronize its version and changelog back to
+`develop` through a separate feature pull request. Restore exactly one empty
+`## [Unreleased]` section above the released entry on `develop` only. Never
+copy that development section to `main`.
 
 ---
 
@@ -310,7 +313,7 @@ Preferred style:
 Do NOT:
 
 * assign a release number in `develop`
-* remove the `Unreleased` section
+* remove the `Unreleased` section from `develop`
 * create multiple `Unreleased` sections
 * leave the release branch without converting `Unreleased`
 * mismatch release numbers across branch name, `VERSION`, changelog, and tag naming
@@ -408,3 +411,18 @@ If instructions are ambiguous:
 
 * default to feature workflow using `develop`
 * do not assume a release unless explicitly requested
+
+---
+
+## Documentation Ownership
+
+All application user, operator, and developer manuals belong in
+[`Azure/AI-Landing-Zones`, `main`, `docs/agent-landing-zone`](https://github.com/Azure/AI-Landing-Zones/tree/main/docs/agent-landing-zone),
+published at https://azure.github.io/AI-Landing-Zones/agent-landing-zone/.
+Keep component READMEs concise and link to that site rather than maintaining
+local product guides or redirect-guide stubs.
+
+Keep internal contributor rules, governance, security policies, ADRs, contracts,
+and release metadata local. Preserve source examples and runtime assets,
+including `public/`, `.chainlit/`, `chainlit.md` even when empty, and `VERSION`.
+Do not treat runtime presentation files as product-manual destinations.

@@ -28,8 +28,12 @@ ingestion service, persists Chainlit feedback and thread data through the
 configured data layer, and provides opt-in secure portal embedding.
 
 This repository is a runtime component of the wider `Azure/agent-landing-zone` solution.
-The platform repository owns the canonical architecture, infrastructure, and
-published product documentation. Preserve compatibility with the deployed
+The platform repository owns foundation architecture and infrastructure.
+All application user, operator, and developer manuals are published from
+[`Azure/AI-Landing-Zones`, `main`, `docs/agent-landing-zone`](https://github.com/Azure/AI-Landing-Zones/tree/main/docs/agent-landing-zone)
+at https://azure.github.io/AI-Landing-Zones/agent-landing-zone/.
+Internal contributor rules, governance, policies, ADRs, contracts, and release
+metadata stay in this repository. Preserve compatibility with the deployed
 orchestrator, ingestion, App Configuration, identity, and storage contracts.
 
 ## Repository boundaries
@@ -70,12 +74,14 @@ The legacy names below remain supported, forwarding to those owners:
 - `connectors/`: focused Azure and external service adapters.
 - `telemetry.py`: logging and instrumentation.
 - `public/`, `.chainlit/`, `chainlit.config.yaml`, `chainlit.md`: theming,
-  presentation, frontend assets, and Chainlit configuration.
+  presentation, frontend assets, and Chainlit configuration. `chainlit.md`
+  is an intentional runtime asset even when empty, not a product manual.
 - `scripts/`, `azure.yaml`, `Dockerfile`, `infra/`: deployment and lifecycle
   assets.
 - `tests/`: `unittest` behavior and security regression coverage.
 - `.quality/`, `.github/scripts/check-quality.py`: protected-base
-  lint/type/import/exception policy; see `docs/python-development.md`.
+  lint/type/import/exception policy. See the central
+  [UI quality checks](https://azure.github.io/AI-Landing-Zones/agent-landing-zone/application-testing/#ui).
 - `.github/copilot-instructions.md`: branching, versioning, changelog, release,
   and documentation rules.
 - `.github/agents/`: active GitHub Copilot engineering roles.
@@ -124,13 +130,54 @@ orchestrator.
   and document-level authorization.
 - Origin checks are browser controls, not authentication or network access
   boundaries. Do not weaken the security contract documented in
-  `docs/copilot-embedding.md`.
+  the central [embedding guide](https://azure.github.io/AI-Landing-Zones/agent-landing-zone/embed-chat/).
 - Use explicit, typed payloads for orchestrator and ingestion requests.
   Timeouts, retries, status handling, and cancellation must remain bounded and
   observable.
 - Treat accessibility as functional correctness: retain keyboard operation,
   focus visibility, semantic structure, readable contrast, responsive layout,
   and reduced-motion compatibility when presentation changes.
+
+## GitHub Actions supply-chain policy
+
+- Pin every external action and reusable workflow in `uses:` to a verified
+  full-length, 40-character commit SHA from its source repository. Tags,
+  branches, and abbreviated SHAs are not allowed. Keep a release-version
+  comment where the source is maintained by hand. Local `./` actions do not
+  require a SHA.
+- Preserve the selected action version when pinning. Verify the commit behind
+  the original tag, including annotated tags, rather than inventing a SHA or
+  combining pinning with an unrelated dependency upgrade.
+- Regenerate agentic `.lock.yml` workflows with the matching gh-aw compiler,
+  not by hand. Pass `--action-mode action --action-tag <verified-full-sha>`
+  so recompilation cannot reintroduce a mutable setup-action reference.
+  For gh-aw v0.87.10, the `github/gh-aw-actions` commit is
+  `bc8c008a419c5b7a29df6f5641edd35fd1c6ea85`.
+- Before committing, inspect every external `uses:` reference in workflow
+  YAML, composite actions, and regenerated lock files. All must remain pinned.
+
+## Shared repository protection standard
+
+- Both `main` and `develop` require a pull request, successful `quality-gate`
+  and the repository's behavior and frontend/container checks. Missing,
+  skipped, cancelled, or failing required checks do not authorize a merge.
+- The required approving-review count is zero. Independent, code-owner and
+  latest-head approvals are not mandatory. A maintainer can merge their own
+  pull request when all required checks pass. `CODEOWNERS` is ownership
+  routing, not a second-person approval requirement.
+- Preserve protected-base evaluation, policy integrity, typing coverage,
+  exception evidence and real same-workflow results. Only quality-control
+  workflows receive the protected-policy integrity guard, not unrelated
+  automations. Changing the guardrails requires explicit maintainer
+  authorization, never a candidate's own approval metadata.
+- Do not disable required checks or leave permanent bypasses. Any expressly
+  authorized administrative exception must be limited to the intended pull
+  requests and removed immediately afterward.
+- Require SHA pinning in repository Actions settings. Keep CodeQL Actions
+  security analysis enabled and authorize `pull_request_target` only for
+  `.github/workflows/block-pr-to-main.yml`, without running pull request code.
+- The normal `develop` to release to `main` flow remains unchanged. This
+  standard does not authorize publishing a release or deploying.
 
 ## Validation and evidence
 
@@ -147,7 +194,8 @@ orchestrator.
   Do not grow the baseline or weaken policy to turn the bootstrap PR green.
 - Exception/dynamic-import evidence comes from the separate standard-unittest
   runner `.github/scripts/run-unittest.py`; pass its same-run report through
-  `--test-evidence`. See `docs/python-development.md` for `QUALITY_RUN_ID`,
+  `--test-evidence`. See the central
+  [UI quality checks](https://azure.github.io/AI-Landing-Zones/agent-landing-zone/application-testing/#ui) for `QUALITY_RUN_ID`,
   exact-source receipt requirements and protected aggregation.
 - The quality evaluator uses a separate environment built from protected
   requirements/tool pins and does not install candidate application code.

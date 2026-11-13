@@ -18,6 +18,204 @@
 - **Package metadata recovery.** Repeat dependency installation after wheel
   metadata is available and run `pip check`, so incomplete source-package
   metadata cannot silently leave the UI image with missing dependencies.
+## [v3.7.0] - 2026-11-08
+
+### Added
+
+- **Opt-in inline presentation:** admitted native-result reading, shared
+  readable REST/Chainlit projections, workflow/history display and build-free
+  SVG, exact table sort/filter/copy and normal-message follow-ups.
+  Unauthenticated offline Playwright checks use the actual JSX/React runner
+  and production API projection with mocked data/auth boundaries in four
+  view/theme combinations. Declared-SDK acceptance is covered by the feature
+  qualification below; live production browser acceptance and production
+  enablement are not claimed.
+
+### Fixed
+
+- Preserve assistant-admitted citations through restored native `items`; ignore
+  user/tool/progress citation imitations. Optional visual construction failure
+  retains readable accepted text.
+- Reject all-null/repeated-category charts. Contain long grid-card labels and
+  locally scroll wide exact-value chart tables without whole-page overflow.
+
+- **Visible table fidelity:** filtering and clipboard export include displayed
+  status and follow-up columns, preserving headings, exact numeric scale,
+  null gaps and sorted/filtered row order.
+
+### Validation
+
+- **Merged feature qualification.** GitHub Actions run `42538167847` passed
+  all jobs: 783 unit cases and 710 offline container cases. The qualified
+  feature candidate and merged `develop` head have the same Git tree.
+  Actual isolated orchestrator-to-UI integration passed 17 cases; fresh
+  non-editable UI package acceptance passed 11 cases.
+- **Coordinated adoption.** Use the matching orchestrator v7.2.0 producer and
+  the umbrella release's validated manifest/configuration. Central inline
+  visuals documentation was merged in Azure/AI-Landing-Zones#178. Release
+  readiness additionally requires passing CI on the exact main-target PR.
+  Disable new generation for rollback while retaining saved-message readers.
+
+## [v3.6.0] - 2026-11-02
+
+### Added
+
+- **Optional native user delegation.** Keep authenticated UI access and
+  `user_delegated` as the default. Explicit `service_identity` uses the selected
+  workload credentials without changing conversation, citation or download
+  ownership boundaries.
+- **Safe managed Toolbox outcomes.** Report missing source delegation and tool
+  failures without exposing provider details or consent links. Never replay a
+  request or change authentication mode automatically.
+
+### Changed
+
+- **Reviewed build and storage dependencies.** Adopt setuptools 84.2.1,
+  Azure Cosmos 4.17.1 and Blob Storage 12.31.0 for the supported Python 3.12
+  application. Preserve owner-partitioned metadata, conditional writes,
+  protected downloads and all native MAF/Durable dependency pins.
+- **Refresh engineering action pins.** Regenerate the issue classifier with
+  gh-aw 0.93.3 and immutable action references. Keep the protected acceptance
+  workflow and the authored one-issue classification policy unchanged.
+
+### Migration and recovery
+
+- Adopt with platform and orchestrator v7.1.0. OBO remains the default.
+  Explicit service identity changes outbound access, not user admission or
+  document entitlements. Redeploy the coordinated combination when changing
+  profiles and start new native sessions. Do not migrate old owner mappings
+  or replay transcripts. Roll back the prior coordinated combination.
+
+## [v3.5.0] - 2026-10-31
+
+### Added
+
+- **Explicit native conversational and process UI.** Add authenticated Chainlit
+  and FastAPI presentation routes over the official Hosted Responses and
+  standalone Durable Extension clients. Bind native selectors and human replies
+  to authenticated owners; reject stale, duplicate and non-pending actions.
+- **Conditional native product metadata and private input.** Persist owner/run
+  mappings and feature-gated history references, feedback and attachment
+  descriptors separately from native checkpoints. Send bounded conversational
+  attachments through native content inputs without corporate ingestion.
+
+### Changed
+
+- **Published native SDK dependency prerequisite.** Pin OpenAI 3.38.0, Agent
+  Framework core 1.24.0, Durable Extension 1.0.0b261029 and Durable Task 1.12.0,
+  with gRPC typing support, before native consumers enter the protected-base
+  evaluator. Existing UI behavior, policy and quality checks are unchanged.
+- **Validated runtime dependency maintenance.** Adopt Azure App Configuration
+  SDK 1.10.0 and Uvicorn 0.54.0, and require Pydantic 2.14.1 or newer within
+  version 2. Preserve authentication, container and protected quality contracts.
+- **Native App Configuration scope.** Load explicit UI keys only under
+  `agent-lz`, use official cached refresh, and require redeployment for structural
+  host/publication changes. Native composition does not register the classic
+  history, feedback or continuity-panel path. Existing deployments remain
+  unchanged when `ORCHESTRATION_HOST` is absent; native state is not migrated.
+- **First native registration identities.** Align component fixtures and SDK
+  workflow addresses with `agent-lz-conversation` and
+  `agent-lz-research-review`; no released native session migration is needed.
+
+### Fixed
+
+- **Durable deployment credential contract regression gate.** Verify the actual
+  ALZ scheduler binding through both native consumers and the published DTS
+  constructors in coordinated checkout tests. Require `ManagedIdentity` and an
+  explicit managed-identity credential for deployment, never a secret-bearing
+  binding or an implicit local `DefaultAzure` chain.
+- **Private inline state-size admission.** Limit native input to three 64 KiB
+  files and 256 KiB serialized content per turn, including base64 and JSON
+  expansion. Validate the entire batch before metadata writes or submission;
+  preserve the published SDK's 1 MiB DTS state-capacity policy.
+
+## [v3.4.2] - 2026-10-31
+
+### Changed
+
+- **Published native SDK dependency prerequisite.** Pin OpenAI 3.38.0, Agent
+  Framework core 1.24.0, Durable Extension 1.0.0b261029 and Durable Task 1.12.0,
+  with gRPC typing support, before native consumers enter the protected-base
+  evaluator. Existing UI behavior, policy and quality checks are unchanged.
+- **Validated runtime dependency maintenance.** Adopt Azure App Configuration
+  SDK 1.10.0 and Uvicorn 0.54.0, and require Pydantic 2.14.1 or newer within
+  version 2. Preserve authentication, container and protected quality contracts.
+
+## [v3.4.1] - 2026-10-30
+
+### Changed
+
+- **Release changelog lifecycle.** Keep `Unreleased` only on `develop`, never
+  on a release branch or `main`, matching the ingestion and orchestrator
+  release process. Restore an empty development section separately after
+  the release is merged.
+- **Reviewed dependency maintenance.** Require Pydantic 2.13.5 or newer within
+  version 2, retaining the adopted Chainlit and patched authentication stack.
+- **Grouped Actions maintenance.** Check GitHub Actions weekly against
+  `develop`, grouped with a seven-day cooldown, without adding a duplicate
+  update stream against `main`.
+- **Shared repository protection standard.** Require pull requests and passing
+  quality, behavior and container checks without mandatory second-person review.
+  Preserve protected-base integrity, immutable Actions references and narrowly
+  scoped privileged workflow authorization.
+
+### Fixed
+
+- **Dependabot configuration syntax.** Separate the GitHub Actions update
+  entry from the preceding package labels so all three update streams remain
+  valid YAML and dependency maintenance continues to run.
+- **Security dependency updates.** Upgrade aiohttp and the setuptools build
+  backend to patched releases. Require PyJWT 2.15 or newer within version 2
+  so new installations cannot select the reported vulnerable token library.
+- **Immutable GitHub Actions references.** Pin the remaining workflow actions
+  to verified full-length commit SHAs without changing their selected versions,
+  and require agents to preserve SHA pinning when editing or regenerating CI.
+
+## [v3.4.0] - 2026-10-28
+
+### Added
+
+- **Interactive protected-source sign-in recovery.** Preserve authenticated
+  downstream Conditional Access challenges through hosted errors and native
+  downloads. Offer explicit principal/session-bound encrypted recovery,
+  request-local Entra authorize/callback handling, and a bundled portal/MSAL
+  recovery handshake without replaying failed or partially emitted turns.
+  Keep claims out of chat persistence and diagnostics; ordinary denial remains
+  denial. Existing OAuth sessions require a fresh login to obtain a binding.
+
+- **Native protected retrieval delegation.** Preserve user-delegated Foundry
+  invocation while forwarding a separately acquired Search user token. Require
+  the matching UI-app assertion for configured Work IQ, use refreshed API
+  tokens on the same turn, and surface safe consent and authentication failures
+  without provider bodies or credential-bearing diagnostic headers. Reject
+  protected uploads without the verified session's explicit uploader object ID
+  before reading files or calling ingestion. Native downloads now use signed
+  authenticated UI grants, current-user Storage OBO for shared documents, and
+  a fresh exact-document native Search gate before workload upload reads;
+  native citations never mint Blob SAS or reach legacy anonymous readers.
+
+### Fixed
+
+- **Recovery authentication module boundaries.** Share bounded HTTP claims
+  parsing through its authentication owner, expose typed OAuth configuration
+  and recovery-binding validation interfaces, and resolve the recovery origin
+  through the configuration provider without an OAuth dependency cycle.
+  Preserve legacy exports, current authorization checks, and recovery protocol.
+
+### Validation
+
+- Full unittest, non-editable installed-wheel and offline Linux-container
+  acceptance, together with protected lint, typing, architecture, exception,
+  policy and aggregate quality checks.
+
+## [v3.3.1] - 2026-10-27
+
+### Fixed
+
+- **Application resource-group targeting.** Resolve Container Apps, registry
+  operations and deployment identities from `AZURE_APP_RESOURCE_GROUP` under
+  `agent-lz`. Confirmed missing or empty values retain the legacy
+  `AZURE_RESOURCE_GROUP` fallback; configuration access failures stop deployment.
 
 ## [v3.3.0] - 2026-10-14
 

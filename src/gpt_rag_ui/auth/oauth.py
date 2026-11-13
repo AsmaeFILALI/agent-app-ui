@@ -11,13 +11,17 @@ import chainlit as cl
 import msal
 
 from gpt_rag_ui.auth.auth_common import (
+    DelegationError,
     canonical_principal_id,
     is_user_authorized,
 )
 from gpt_rag_ui.config.dependencies import get_config
 from gpt_rag_ui.config.errors import ConfigurationError
+from gpt_rag_ui.auth.recovery import recovery_context, new_recovery_binding, RecoveryError
 
 logger = logging.getLogger("gpt_rag_ui.auth_oauth")
+# MSAL DEBUG includes token request bodies (including claims challenges).
+logging.getLogger("msal").setLevel(logging.WARNING)
 
 config = get_config()
 
@@ -100,7 +104,7 @@ def _is_access_token_expiring(access_token: str, *, min_ttl_seconds: int = 120) 
     return ttl <= int(min_ttl_seconds)
 
 
-def _resolve_oauth_runtime_config() -> tuple[str, str, str]:
+def resolve_oauth_runtime_config() -> tuple[str, str, str]:
     """Return (client_id, client_secret, tenant_id) for MSAL operations."""
 
     # Prefer process env (bootstrapped by main.py), then App Configuration.
@@ -116,7 +120,8 @@ def _resolve_oauth_runtime_config() -> tuple[str, str, str]:
     return client_id, client_secret, tenant_id
 
 
-def _resolve_msal_scopes_for_refresh(*, client_id: str) -> List[str]:
+def resolve_msal_scopes_for_refresh(*, client_id: str) -> List[str]:
+    """Return configured UI API scopes, excluding MSAL-reserved OIDC scopes."""
     raw_scopes, scopes = read_scopes_list("OAUTH_AZURE_AD_SCOPES")
     if not scopes:
         scopes = [
@@ -151,24 +156,34 @@ def _resolve_msal_scopes_for_refresh(*, client_id: str) -> List[str]:
     return msal_scopes
 
 
-async def refresh_access_token(refresh_token: str) -> dict:
+# Preserve former owner exports without duplicating resolution logic.
+_resolve_oauth_runtime_config = resolve_oauth_runtime_config
+_resolve_msal_scopes_for_refresh = resolve_msal_scopes_for_refresh
+
+
+async def refresh_access_token(refresh_token: str, *, claims_challenge: str | None = None) -> dict:
     """Exchange refresh_token -> new access_token using MSAL.
 
     This runs MSAL's blocking network call in a thread to avoid blocking the event loop.
     """
 
-    client_id, client_secret, tenant_id = _resolve_oauth_runtime_config()
+    client_id, client_secret, tenant_id = resolve_oauth_runtime_config()
     authority = f"https://login.microsoftonline.com/{tenant_id}"
-    msal_scopes = _resolve_msal_scopes_for_refresh(client_id=client_id)
+    msal_scopes = resolve_msal_scopes_for_refresh(client_id=client_id)
 
-    msal_app = msal.ConfidentialClientApplication(
+    msal_app = await asyncio.to_thread(
+        msal.ConfidentialClientApplication,
         client_id,
         authority=authority,
         client_credential=client_secret,
+        timeout=10,
     )
 
     def _run_refresh() -> dict:
-        return msal_app.acquire_token_by_refresh_token(refresh_token=refresh_token, scopes=msal_scopes)
+        return msal_app.acquire_token_by_refresh_token(
+            refresh_token=refresh_token, scopes=msal_scopes,
+            **({"data": {"claims": claims_challenge}} if claims_challenge else {}),
+        )
 
     return await asyncio.to_thread(_run_refresh)
 
@@ -198,9 +213,9 @@ async def ensure_fresh_user_access_token(user: cl.User, *, min_ttl_seconds: int 
 
     result = await refresh_access_token(refresh_token_value)
     if "error" in result:
-        error_desc = result.get("error_description", "Unknown error")
-        logger.warning("User token refresh failed: %s", error_desc)
-        raise RuntimeError(f"token refresh failed: {error_desc}")
+        recovery = DelegationError.from_msal(result)
+        logger.warning("User token refresh failed: reason=%s", recovery.code)
+        raise recovery from None
 
     new_access_token = result.get("access_token")
     new_refresh_token = result.get("refresh_token") or refresh_token_value
@@ -365,26 +380,27 @@ async def oauth_callback(
             "Ensure your scopes include 'offline_access' (for example: api://<CLIENT_ID>/user_impersonation,openid,profile,offline_access)."
         )
 
-    msal_app = msal.ConfidentialClientApplication(
+    msal_app = await asyncio.to_thread(
+        msal.ConfidentialClientApplication,
         client_id,
         authority=authority,
         client_credential=client_secret,
+        timeout=10,
     )
 
-    result = msal_app.acquire_token_by_refresh_token(refresh_token=refresh_token, scopes=msal_scopes)
+    recovery = recovery_context.get()
+    # This pinned MSAL method forwards token form data, not the
+    # claims_challenge keyword accepted by the auth-code/OBO methods.
+    exchange_kwargs = {"data": {"claims": recovery["claims"]}} if recovery and recovery.get("claims") else {}
+    result = await asyncio.to_thread(
+        msal_app.acquire_token_by_refresh_token,
+        refresh_token=refresh_token, scopes=msal_scopes, **exchange_kwargs,
+    )
 
     if "error" in result:
-        error_desc = result.get("error_description", "Unknown error")
-        if "AADSTS65001" in error_desc:
-            logger.error("Token acquisition failed (consent required): %s", error_desc)
-            raise RuntimeError(
-                "Token acquisition failed: AADSTS65001 (consent required). "
-                "Grant consent for this app in Entra ID (App Registration -> API permissions -> Grant admin consent) "
-                "or allow user consent, then sign in again."
-            )
-
-        logger.error("Token acquisition failed: %s", error_desc)
-        raise RuntimeError(f"Token acquisition failed: {error_desc}")
+        recovery = DelegationError.from_msal(result)
+        logger.warning("Token acquisition failed: reason=%s", recovery.code)
+        raise recovery from None
 
     access_token = result.get("access_token")
     refresh_token = result.get("refresh_token") or refresh_token
@@ -411,6 +427,12 @@ async def oauth_callback(
             "OAuth identity is missing valid tid or oid claims."
         ) from exc
     tenant_id_claim, object_id = principal_id.split(":", 1)
+    if recovery and (
+        principal_id != recovery.get("p")
+        or tenant_id_claim != canonical_principal_id(tenant_id, object_id).split(":", 1)[0]
+        or not isinstance(id_token.get("exp"), int) or id_token["exp"] <= time.time()
+    ):
+        raise RecoveryError()
     user_name = str(id_token.get("name") or "").strip() or principal_id
 
     # "Single token" mode: do not call Microsoft Graph from the client.
@@ -446,6 +468,7 @@ async def oauth_callback(
         "principal_id": principal_id,
         "tenant_id": tenant_id_claim,
         "object_id": object_id,
+        "recovery_binding": new_recovery_binding(),
     }
 
     return cl.User(

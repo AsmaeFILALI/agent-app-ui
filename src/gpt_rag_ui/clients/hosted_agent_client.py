@@ -7,6 +7,7 @@ import json
 import logging
 import math
 import os
+import uuid
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
@@ -24,18 +25,22 @@ from azure.identity.aio import (
 
 from gpt_rag_ui.config.dependencies import get_config
 from gpt_rag_ui.config.errors import ConfigurationError
+from gpt_rag_ui.auth.auth_common import (
+    DelegationError, normalize_guid, validated_claims_challenge, http_claims_challenge,
+)
+from gpt_rag_ui.auth.entra_token import EntraTokenError, EntraTokenValidator
 
 logger = logging.getLogger("gpt_rag_ui.hosted_agent_client")
 config = get_config()
 
 DEFAULT_SSE_IDLE_TIMEOUT_SECONDS = 60.0
+SEARCH_USER_SCOPE = "https://search.azure.com/.default"
 
 # "user_delegated" (default) performs an OAuth2 On-Behalf-Of exchange of the
 # signed-in Chainlit user's own access token, so Microsoft Foundry resolves the
-# end user as the caller identity. This is required for Toolbox per-user
-# document-level security passthrough (see ADR-0001 in Azure/agent-landing-zone), which
-# freezes identity passthrough as the required release path and forbids
-# defaulting to a service/group-filter fallback.
+# end user as the caller identity. Protected retrieval independently forwards
+# an audience-specific Search token under ADR-0028; a Foundry token alone is
+# not downstream authorization.
 #
 # "service_identity" is an explicit, non-default opt-out that uses this
 # service's own managed-identity/Azure CLI credential. It must be configured
@@ -56,9 +61,29 @@ class HostedAgentConfigError(HostedAgentError):
 class HostedAgentAuthenticationError(HostedAgentError):
     """Raised when the server cannot acquire a hosted data-plane token."""
 
+    def __init__(
+        self, message: str, *, code: str = "authentication_required",
+        claims_challenge: object = None,
+    ):
+        super().__init__(message)
+        recovery = DelegationError(code, claims_challenge=claims_challenge)
+        self.code = recovery.code
+        self.claims_challenge = recovery.claims_challenge
+
 
 class HostedAgentHTTPError(HostedAgentError):
     """Raised when the hosted endpoint returns a non-success status."""
+
+    def __init__(self, status_code: int, *, claims_challenge: object = None):
+        self.status_code = status_code
+        self.claims_challenge = validated_claims_challenge(claims_challenge)
+        self.code = (
+            "interaction_required" if self.claims_challenge is not None
+            else "authentication_required" if status_code == 401
+            else "source_denied" if status_code == 403
+            else "hosted_http_error"
+        )
+        super().__init__(f"Hosted agent returned HTTP {status_code}.")
 
 
 class HostedAgentProtocolError(HostedAgentError):
@@ -68,10 +93,19 @@ class HostedAgentProtocolError(HostedAgentError):
 class HostedAgentResponseError(HostedAgentError):
     """Raised for a terminal Responses ``error`` frame."""
 
-    def __init__(self, message: str, *, code: str = "", retryable: bool = False):
+    def __init__(
+        self, message: str, *, code: str = "", retryable: bool = False,
+        claims_challenge: object = None,
+    ):
         super().__init__(message)
-        self.code = code
+        self.code = code if code in {
+            "authentication_required", "interaction_required", "consent_required",
+            "source_denied", "configuration_error", "authentication_unavailable",
+            "tool_failed", "retrieval_failed", "retrieval_required",
+            "missing_delegation", "invalid_delegation",
+        } else "hosted_error"
         self.retryable = retryable
+        self.claims_challenge = validated_claims_challenge(claims_challenge)
 
 
 class HostedAgentCancelledError(HostedAgentError):
@@ -211,8 +245,74 @@ def validate_hosted_agent_config() -> None:
     than on the first user request.
     """
     settings = load_hosted_agent_settings()
+    _validate_retrieval_auth_mode()
+    _validate_retrieval_transport(settings)
+    _work_iq_app_config()
     if settings.auth_mode == "user_delegated":
         _resolve_confidential_client_config()
+
+
+def _validate_retrieval_auth_mode() -> None:
+    mode = (_get_config_value("RETRIEVAL_AUTH_MODE", "native_search") or "native_search").strip()
+    if mode != "native_search":
+        raise HostedAgentConfigError(
+            "RETRIEVAL_AUTH_MODE must be 'native_search'. "
+            "Other protected retrieval modes are not supported."
+        )
+
+
+def _validate_retrieval_transport(settings: HostedAgentSettings) -> None:
+    # Retain the explicit legacy service-only transport for unconfigured
+    # protocol callers. It cannot participate in configured native retrieval.
+    if settings.auth_mode != "user_delegated" and _get_config_value("RETRIEVAL_AUTH_MODE") is not None:
+        raise HostedAgentConfigError(
+            "Native protected retrieval requires HOSTED_AGENT_AUTH_MODE=user_delegated."
+        )
+
+
+def _credential_header(value: object) -> str:
+    if (
+        not isinstance(value, str) or not value.strip()
+        or len(value.encode("utf-8")) > 8192
+        or any(ord(char) < 33 or ord(char) > 126 for char in value)
+    ):
+        raise HostedAgentAuthenticationError("A delegated credential is missing or invalid.")
+    return value
+
+
+# Retain the former owner export for compatibility; parsing belongs to auth.
+_http_claims_challenge = http_claims_challenge
+
+
+def _work_iq_app_config() -> tuple[str, str] | None:
+    enabled = (_get_config_value("WORK_IQ_ENABLED", "false") or "false").strip().lower()
+    if enabled in {"false", "0", "no", "n", "off"}:
+        return None
+    if enabled not in {"true", "1", "yes", "y", "on"}:
+        raise HostedAgentConfigError("WORK_IQ_ENABLED must be a boolean.")
+    try:
+        app_id = normalize_guid(
+            _get_config_value("WORK_IQ_APPLICATION_ID") or "", claim_name="Work IQ app",
+        )
+        ui_app = normalize_guid(
+            _get_config_value("OAUTH_AZURE_AD_CLIENT_ID") or "", claim_name="UI app",
+        )
+        ui_tenant = normalize_guid(
+            _get_config_value("OAUTH_AZURE_AD_TENANT_ID") or "", claim_name="UI tenant",
+        )
+        tenant = normalize_guid(
+            _get_config_value("WORK_IQ_TENANT_ID") or ui_tenant,
+            claim_name="Work IQ tenant",
+        )
+    except ValueError:
+        raise HostedAgentConfigError(
+            "Work IQ requires WORK_IQ_APPLICATION_ID and the configured UI tenant."
+        ) from None
+    if app_id != ui_app or tenant != ui_tenant:
+        raise HostedAgentConfigError(
+            "Work IQ assertion application and tenant must match the UI API."
+        )
+    return tenant, app_id
 
 
 def build_invocation_messages(
@@ -270,8 +370,8 @@ def _parse_sse_block(raw: str) -> HostedAgentEvent | None:
         data = json.loads(raw_data) if raw_data else {}
     except json.JSONDecodeError as exc:
         raise HostedAgentProtocolError(
-            f"Hosted agent returned invalid JSON for SSE event {event_type or '<unknown>'!r}."
-        ) from exc
+            "Hosted agent returned invalid JSON in an SSE event."
+        ) from None
     if not isinstance(data, dict):
         raise HostedAgentProtocolError("Hosted-agent SSE data must be a JSON object.")
 
@@ -332,9 +432,9 @@ async def _acquire_obo_token(user_access_token: str, resource_scope: str) -> str
     """Exchange the signed-in user's token for a hosted-agent data-plane token.
 
     Uses the OAuth2 On-Behalf-Of flow (MSAL) so Microsoft Foundry's gateway
-    resolves the *end user*, not this service, as the caller identity. This is
-    required for Toolbox per-user document-level security passthrough
-    (ADR-0001 in Azure/agent-landing-zone). A fresh confidential client is created for
+    resolves the *end user*, not this service, as the caller identity when
+    used for Foundry. Other resource scopes acquire separate delegated tokens
+    for protected retrieval. A fresh confidential client is created for
     each call (matching the pattern in auth_oauth.py); nothing is cached and
     the token value is never logged.
     """
@@ -344,6 +444,7 @@ async def _acquire_obo_token(user_access_token: str, resource_scope: str) -> str
         client_id,
         authority=authority,
         client_credential=client_secret,
+        timeout=10,
     )
 
     def _run_obo() -> dict[str, Any]:
@@ -354,20 +455,20 @@ async def _acquire_obo_token(user_access_token: str, resource_scope: str) -> str
 
     result = await asyncio.to_thread(_run_obo)
     if "error" in result:
+        recovery = DelegationError.from_msal(result)
         logger.warning(
-            "Hosted-agent on-behalf-of token exchange failed: error=%s",
-            result.get("error"),
+            "Hosted-agent on-behalf-of token exchange failed: reason=%s",
+            recovery.code,
         )
         raise HostedAgentAuthenticationError(
-            "Unable to exchange the signed-in user's token for a hosted-agent "
-            "data-plane token (on-behalf-of exchange failed)."
-        )
+            str(recovery), code=recovery.code, claims_challenge=recovery.claims_challenge,
+        ) from None
     delegated_token = result.get("access_token")
     if not delegated_token:
         raise HostedAgentAuthenticationError(
             "The on-behalf-of exchange did not return a hosted-agent access token."
         )
-    return delegated_token
+    return _credential_header(delegated_token)
 
 
 async def acquire_obo_token(user_access_token: str, resource_scope: str) -> str:
@@ -389,20 +490,14 @@ async def acquire_obo_token(user_access_token: str, resource_scope: str) -> str:
 
 
 async def acquire_service_identity_token(resource_scope: str) -> str:
-    """Acquire this service's own managed-identity/Azure CLI credential token
-    for the *trusted middle-tier* delegated-header owner-binding model
-    (``HOSTED_CONVERSATION_OWNER_BINDING=delegated``, see
-    ``hosted_conversation_store.py``): the BFF authenticates as itself and
-    separately asserts the validated end user's oid via the platform's
-    ``x-ms-user-identity`` header, rather than exchanging the user's own
-    token via on-behalf-of.
+    """Acquire this service's own asynchronous credential token, not a user token.
 
-    This reuses the exact same credential chain as
-    ``HOSTED_AGENT_AUTH_MODE=service_identity`` (``_default_credential``), but
-    is intentionally a separate function from ``acquire_obo_token``: the two
-    represent different trust models and must never be conflated. A fresh
-    credential is created and closed for each call (no caching), matching the
-    OBO helper's pattern; nothing about the returned token is ever logged.
+    Reuse the ``HOSTED_AGENT_AUTH_MODE=service_identity`` credential chain.
+    Native Responses and approved common-source reads send this bearer without
+    asserting a user header. Legacy Conversations owner binding remains a
+    separate caller-owned protocol; this helper does not create user context.
+    A fresh credential is closed after every acquisition, and tokens are never
+    logged. Failure never falls back to OBO.
     """
     credential = _default_credential()
     try:
@@ -410,8 +505,7 @@ async def acquire_service_identity_token(resource_scope: str) -> str:
             token = await credential.get_token(resource_scope)
         except AzureError as exc:
             raise HostedAgentAuthenticationError(
-                "Unable to acquire a service-identity data-plane token for "
-                "the hosted-continuity delegated owner-binding path."
+                "Unable to acquire a service-identity data-plane token."
             ) from exc
     finally:
         await credential.close()
@@ -433,6 +527,7 @@ class HostedAgentClient:
         http_client: httpx.AsyncClient | None = None,
     ):
         self.settings = settings
+        self._assertion_validator: EntraTokenValidator | None = None
         self._credential = credential
         self._owns_credential = False
         if self.settings.auth_mode == "service_identity" and self._credential is None:
@@ -495,13 +590,37 @@ class HostedAgentClient:
             raise HostedAgentAuthenticationError(
                 "A signed-in user access token is required to call the hosted "
                 "agent (HOSTED_AGENT_AUTH_MODE=user_delegated, the default). "
-                "Refusing to fall back to a service identity: ADR-0001 requires "
-                "per-user Toolbox identity passthrough on the hosted path."
+                "Refusing to fall back to a service identity."
             )
         delegated_token = await _acquire_obo_token(
             stripped_user_token, self.settings.resource_scope
         )
         return AccessToken(delegated_token, 0)
+
+    async def _work_iq_assertion(self, assertion: str) -> str | None:
+        app = _work_iq_app_config()
+        if app is None:
+            return None
+        tenant_id, app_id = app
+        validator = self._assertion_validator
+        if validator is None or validator.tenant_id != tenant_id or validator.audience != app_id:
+            validator = EntraTokenValidator(
+                tenant_id=tenant_id, audience=app_id, required_scope="access_as_user",
+            )
+            self._assertion_validator = validator
+        try:
+            await validator.validate(assertion)
+        except EntraTokenError:
+            raise HostedAgentAuthenticationError(
+                "Work IQ requires a valid UI API user assertion with access_as_user.",
+                code="authentication_required",
+            ) from None
+        except httpx.HTTPError:
+            raise HostedAgentAuthenticationError(
+                "The user assertion could not be verified.",
+                code="authentication_unavailable",
+            ) from None
+        return assertion
 
     async def stream(
         self,
@@ -517,7 +636,24 @@ class HostedAgentClient:
                 "Invocation messages must end in a non-empty user message."
             )
 
+        _validate_retrieval_auth_mode()
+        _validate_retrieval_transport(self.settings)
+        forwarded_headers: dict[str, str] = {}
+        if self.settings.auth_mode != "user_delegated" and _work_iq_app_config() is not None:
+            raise HostedAgentConfigError("Work IQ requires user-delegated hosted authentication.")
+        if self.settings.auth_mode == "user_delegated":
+            # The original API assertion is used independently for each audience.
+            # Neither token is an OBO assertion for the other.
+            assertion = _credential_header((user_access_token or "").strip())
+            work_iq_assertion = await self._work_iq_assertion(assertion)
+            if work_iq_assertion is not None:
+                forwarded_headers["x-client-work-iq-assertion"] = work_iq_assertion
         access_token = await self._acquire_data_plane_token(user_access_token)
+        transport_token = _credential_header(access_token.token)
+        if self.settings.auth_mode == "user_delegated":
+            forwarded_headers["x-client-search-token"] = _credential_header(
+                await _acquire_obo_token(assertion, SEARCH_USER_SCOPE)
+            )
 
         metadata: dict[str, str] = {}
         if question_id:
@@ -530,14 +666,19 @@ class HostedAgentClient:
             "metadata": metadata,
         }
         managed_conversation_id = conversation_id.strip()
+        if not managed_conversation_id and self.settings.auth_mode == "user_delegated":
+            managed_conversation_id = str(uuid.uuid4())
         if managed_conversation_id:
             payload["conversation_id"] = managed_conversation_id
 
         headers = {
-            "Authorization": f"Bearer {access_token.token}",
+            "Authorization": f"Bearer {transport_token}",
             "Accept": "text/event-stream",
             "Content-Type": "application/json",
+            **forwarded_headers,
         }
+        if sum(len(value.encode("utf-8")) for value in headers.values()) > 16384:
+            raise HostedAgentAuthenticationError("Delegated credentials exceed the request header limit.")
         logger.info(
             "Invoking hosted agent: conversation_id=%s question_id=%s url=%s",
             managed_conversation_id or "new",
@@ -554,10 +695,14 @@ class HostedAgentClient:
             headers=headers,
         ) as response:
             if not 200 <= response.status_code < 300:
-                body = (await response.aread()).decode(errors="replace")
-                details = body[:2000] + ("..." if len(body) > 2000 else "")
+                # Provider bodies can contain credentials, excerpts or internal
+                # diagnostics. Do not read them into errors or telemetry.
                 raise HostedAgentHTTPError(
-                    f"Hosted agent returned HTTP {response.status_code}: {details}"
+                    response.status_code,
+                    claims_challenge=(
+                        http_claims_challenge(response)
+                        if response.status_code in {401, 403} else None
+                    ),
                 )
             if "text/event-stream" not in response.headers.get("content-type", "").lower():
                 raise HostedAgentProtocolError(
@@ -630,15 +775,22 @@ class HostedAgentClient:
                     return
                 elif event_type == "response.cancelled":
                     terminal_event_seen = True
-                    raise HostedAgentCancelledError(
-                        str(data.get("reason") or "Hosted agent cancelled the response.")
-                    )
-                elif event_type == "error":
+                    reason = data.get("reason")
+                    safe_reason = reason if isinstance(reason, str) and reason in {
+                        "client_cancelled", "timeout", "shutdown",
+                    } else "cancelled"
+                    raise HostedAgentCancelledError(f"Hosted agent {safe_reason}.")
+                elif event_type in {"error", "response.failed"}:
                     terminal_event_seen = True
+                    if event_type == "response.failed":
+                        failed_response = data.get("response")
+                        failed_error = failed_response.get("error") if isinstance(failed_response, dict) else None
+                        data = failed_error if isinstance(failed_error, dict) else {}
                     raise HostedAgentResponseError(
-                        str(data.get("message") or "Hosted agent returned an error."),
+                        "The hosted agent could not complete this request.",
                         code=str(data.get("code") or ""),
                         retryable=bool(data.get("retryable", False)),
+                        claims_challenge=data.get("claims_challenge"),
                     )
 
         if not terminal_event_seen:

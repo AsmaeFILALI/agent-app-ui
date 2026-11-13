@@ -1,3 +1,8 @@
-The infrastructure for this project is defined in: https://github.com/Azure/agent-landing-zone
+# UI deployment infrastructure
 
-After deploying the infrastructure, you can use `azd env refresh` and `azd deploy` to deploy the frontend.
+`main.bicep` is an empty resource-group-scoped entry point. It does not
+provision the Agent Landing Zone platform. Foundation infrastructure belongs
+to `Azure/agent-landing-zone`.
+
+See the central [deployment guide](https://azure.github.io/AI-Landing-Zones/agent-landing-zone/deploy-full-stack/)
+and [local development guide](https://azure.github.io/AI-Landing-Zones/agent-landing-zone/local-development/).

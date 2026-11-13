@@ -734,7 +734,11 @@ def _create_chainlit_app(
     """
 
     embed_settings = embed_settings or EmbedSettings()
-    ingestion_uploads_enabled = load_ingestion_uploads_enabled(config)
+    from gpt_rag_ui.config.native import load_native_settings
+    native_settings = load_native_settings(config)
+    ingestion_uploads_enabled = (
+        native_settings.private_uploads if native_settings else load_ingestion_uploads_enabled(config)
+    )
     _configure_embed_environment(embed_settings)
     _configure_auth_environment(config, auth_state)
     effective_auth = auth_state or _evaluate_auth_state(config, embed_settings)
@@ -742,13 +746,19 @@ def _create_chainlit_app(
         effective_auth, ingestion_uploads_enabled=ingestion_uploads_enabled,
     )
 
+    from gpt_rag_ui.services.download_security import native_downloads_enabled
+    native_downloads = native_downloads_enabled(config)
     download_tokens = None
-    if embed_settings.enabled:
+    if embed_settings.enabled or native_downloads:
         from gpt_rag_ui.services.download_security import configure_download_tokens
 
         download_tokens = configure_download_tokens(
             secret=os.environ["CHAINLIT_AUTH_SECRET"],
-            public_url=embed_settings.ui_origin,
+            public_url=(
+                embed_settings.ui_origin if embed_settings.enabled
+                else (os.environ.get("CHAINLIT_URL") or _get_str_config(config, "CHAINLIT_URL"))
+            ),
+            native=native_downloads,
         )
 
     copilot_sessions = None
@@ -774,6 +784,14 @@ def _create_chainlit_app(
                 effective_auth, ingestion_uploads_enabled=ingestion_uploads_enabled,
             )
         )
+        if native_settings is not None:
+            from gpt_rag_ui.clients.native_attachments import ATTACHMENT_TYPES, MAX_ATTACHMENTS
+            upload = chainlit_config.features.spontaneous_file_upload
+            # Chainlit's picker has an integer-MiB setting. The server enforces
+            # the finer 64 KiB/file and 256 KiB serialized native-turn limits.
+            upload.max_size_mb = 1
+            upload.max_files = MAX_ATTACHMENTS
+            upload.accept = sorted(set(ATTACHMENT_TYPES.values()))
     configure_chainlit_allowed_origins(embed_settings, chainlit_config)
     import chainlit.server as chainlit_server
 
@@ -821,7 +839,7 @@ def _create_chainlit_app(
         return blob_data
 
     blob_download_app = None
-    if not embed_settings.enabled:
+    if not embed_settings.enabled and not native_downloads:
         # Preserve the existing standalone route. Copilot
         # mode registers a different, authenticated grant route on host_app.
         blob_download_app = FastAPI()
@@ -942,12 +960,18 @@ def _create_chainlit_app(
         try:
             yield
         finally:
-            if chainlit_handlers.CHAT_BACKEND == "hosted_agent":
+            if native_settings is not None:
+                from gpt_rag_ui.api.native_chat import get_service
+                await get_service().aclose()
+            elif chainlit_handlers.CHAT_BACKEND == "hosted_agent":
                 from gpt_rag_ui.clients.hosted_agent_client import close_hosted_agent_client
 
                 await close_hosted_agent_client()
 
     host_app = FastAPI(title="Agent Landing Zone UI host", lifespan=_host_lifespan)
+    if effective_auth.oauth_configured and chainlit_handlers.CHAT_BACKEND in {"hosted_agent", "native"}:
+        from gpt_rag_ui.api.auth_recovery import register_auth_recovery_routes
+        register_auth_recovery_routes(host_app)
     if embed_settings.enabled:
         from gpt_rag_ui.auth.embed_security import (
             configure_copilot_bridge_guards,
@@ -1027,10 +1051,21 @@ def _create_chainlit_app(
             validator=validator,
             config=config,
         )
+    if embed_settings.enabled or native_downloads:
+        from gpt_rag_ui.api.download_routes import register_secure_download_route
+        from gpt_rag_ui.clients.blob import NativeDownloadClient
+        from gpt_rag_ui.services.download_security import DownloadStream
+
+        def guarded_blob_reader(file_name: str) -> DownloadStream:
+            if native_downloads:
+                raise RuntimeError("Legacy Blob readers are unavailable for native downloads.")
+            return stream_from_blob(file_name)
+
+        assert download_tokens is not None
         register_secure_download_route(
             host_app,
             manager=download_tokens,
-            download_blob=stream_from_blob,
+            download_blob=guarded_blob_reader,
             allowed_containers={
                 container
                 for container in (
@@ -1043,6 +1078,7 @@ def _create_chainlit_app(
             conversation_container=conversation_documents_container,
             shared_containers=shared_download_containers,
             sessions=copilot_sessions,
+            native_client=NativeDownloadClient(config) if native_downloads else None,
         )
 
     @host_app.get("/version-footer")
@@ -1064,7 +1100,12 @@ def _create_chainlit_app(
         }
         return JSONResponse(payload)
 
-    _mount_panel_routes(host_app, config, chainlit_handlers)
+    if native_settings is not None:
+        from gpt_rag_ui.api.native import register_native_routes
+        from gpt_rag_ui.api.native_chat import get_service
+        register_native_routes(host_app, get_service())
+    else:
+        _mount_panel_routes(host_app, config, chainlit_handlers)
 
     if blob_download_app is not None:
         host_app.mount("/api/download", blob_download_app)
@@ -1074,7 +1115,9 @@ def _create_chainlit_app(
 
     logger.info("Mounted Chainlit app at / on host app")
 
-    FastAPIInstrumentor.instrument_app(host_app)
+    FastAPIInstrumentor.instrument_app(
+        host_app, excluded_urls=r".*/auth/oauth/azure-ad.*,.*?/api/auth/recovery.*,.*?/copilot/auth/recovery.*",
+    )
     HTTPXClientInstrumentor().instrument()
     return host_app
 

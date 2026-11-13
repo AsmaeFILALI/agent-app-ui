@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Local package feed override.** Forward an optional credential-free HTTPS
+  `PIP_INDEX_URL` to local Docker builds. Reject URL user information, query
+  strings and fragments; authenticated feeds need a separately reviewed
+  build-secret mechanism. Cloud ACR Task builds are unchanged.
+
+### Fixed
+
+- **Local build-context isolation.** Exclude root/nested environment files,
+  local configuration, upload caches, deployment logs and local state from
+  Docker's COPY-all context, including files ignored by Git's clean-source
+  check. Add exclusion contracts and an optional synthetic Docker export test.
+- **Package metadata recovery.** Repeat dependency installation after wheel
+  metadata is available and run `pip check`, so incomplete source-package
+  metadata cannot silently leave the UI image with missing dependencies.
 ## [v3.7.0] - 2026-11-08
 
 ### Added

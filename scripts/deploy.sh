@@ -24,6 +24,10 @@ success() { echo -e "${GREEN}$*${NC}" >&2; }
 warn() { echo -e "${YELLOW}$*${NC}" >&2; }
 error() { echo -e "${RED}$*${NC}" >&2; }
 
+validate_package_feed() {
+  [[ "$1" =~ ^https://[^/@?#[:space:]]+(/[^?#[:space:]]*)?$ ]]
+}
+
 select_cli_value() {
   local expected="${1:-}"
   local line trimmed fallback=""
@@ -320,7 +324,16 @@ imageRef="${containerRegistryLoginServer}/azure-gpt-rag/${imageRepository}:${tag
 
 if [[ "$buildMode" == "local" ]]; then
   info "Building Docker image..."
-  docker build --platform linux/amd64 -t "$imageRef" .
+  # Forward the corporate PyPI feed to the build when configured (e.g. PIP_INDEX_URL).
+  build_args=()
+  if [[ -n "${PIP_INDEX_URL:-}" ]]; then
+    if ! validate_package_feed "$PIP_INDEX_URL"; then
+      error "PIP_INDEX_URL must be a credential-free HTTPS URL without query or fragment. Authenticated feeds require a separately reviewed build-secret path."
+      exit 1
+    fi
+    build_args+=(--build-arg "PIP_INDEX_URL=${PIP_INDEX_URL}")
+  fi
+  docker build --platform linux/amd64 ${build_args[@]+"${build_args[@]}"} -t "$imageRef" .
 
   info "Pushing image..."
   docker push "$imageRef"
